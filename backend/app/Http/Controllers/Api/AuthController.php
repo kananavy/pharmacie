@@ -34,6 +34,32 @@ class AuthController extends Controller
         ]);
     }
 
+    public function register(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|string|min:8|confirmed',
+            'role' => 'required|in:admin,caissier,vendeur'
+        ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+            'role' => $request->role
+        ]);
+
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'access_token' => $token,
+            'token_type' => 'Bearer',
+            'user' => $user,
+            'message' => 'Inscription réussie'
+        ], 201);
+    }
+
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();

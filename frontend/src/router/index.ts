@@ -11,6 +11,12 @@ const router = createRouter({
             meta: { guest: true }
         },
         {
+            path: '/register',
+            name: 'register',
+            component: () => import('../views/RegisterView.vue'),
+            meta: { guest: true }
+        },
+        {
             path: '/',
             component: () => import('../layouts/DashboardLayout.vue'),
             meta: { auth: true },
@@ -19,31 +25,37 @@ const router = createRouter({
                     path: '',
                     name: 'dashboard',
                     component: () => import('../views/DashboardView.vue'),
-                    meta: { roles: ['admin', 'caissier'] }
+                    meta: { roles: ['admin', 'vendeur', 'caissier'] }
                 },
                 {
-                    path: 'pos',
-                    name: 'pos',
-                    component: () => import('../views/POSView.vue'),
+                    path: 'orders',
+                    name: 'orders',
+                    component: () => import('../views/OrderCreationView.vue'),
+                    meta: { roles: ['admin', 'vendeur'] }
+                },
+                {
+                    path: 'cashier',
+                    name: 'cashier',
+                    component: () => import('../views/CashierView.vue'),
                     meta: { roles: ['admin', 'caissier'] }
                 },
                 {
                     path: 'medications',
                     name: 'medications',
                     component: () => import('../views/MedicationsView.vue'),
-                    meta: { roles: ['admin', 'caissier'] }
+                    meta: { roles: ['admin'] }
                 },
                 {
                     path: 'prescriptions',
                     name: 'prescriptions',
                     component: () => import('../views/PrescriptionsView.vue'),
-                    meta: { roles: ['admin', 'caissier'] }
+                    meta: { roles: ['admin', 'vendeur'] }
                 },
                 {
                     path: 'patients',
                     name: 'patients',
                     component: () => import('../views/PatientsView.vue'),
-                    meta: { roles: ['admin', 'caissier'] }
+                    meta: { roles: ['admin', 'vendeur'] }
                 },
                 {
                     path: 'suppliers',
@@ -80,7 +92,13 @@ router.beforeEach((to, _from, next) => {
         if (to.meta.roles && Array.isArray(to.meta.roles)) {
             const userRole = auth.user?.role
             if (!to.meta.roles.includes(userRole)) {
-                return next('/') // Redirect to dashboard if unauthorized
+                // Prevent infinite loop: if they are already on the dashboard or if they have no role
+                if (to.path === '/') {
+                    if (userRole === 'vendeur') return next('/orders')
+                    if (userRole === 'caissier') return next('/cashier')
+                    return next('/login')
+                }
+                return next('/')
             }
         }
         next()

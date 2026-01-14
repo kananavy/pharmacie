@@ -5,19 +5,21 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Fournisseur extends Model
+class Patient extends Model
 {
     use HasFactory;
 
     protected $fillable = [
         'nom',
-        'email',
+        'prenom',
+        'date_naissance',
         'telephone',
-        'adresse'
+        'adresse',
+        'numero_dossier'
     ];
 
-    public function medicaments()
+    public function ordonnances()
     {
-        return $this->hasMany(Medicament::class);
+        return $this->hasMany(Ordonnance::class);
     }
 }

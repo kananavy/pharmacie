@@ -12,7 +12,7 @@ class MedicamentController extends Controller
 {
     public function index()
     {
-        return Medicament::with('fournisseur')->get();
+        return Medicament::all();
     }
 
     public function store(Request $request)
@@ -54,7 +54,11 @@ class MedicamentController extends Controller
 
     public function show(Medicament $medicament)
     {
-        return $medicament->load('fournisseur', 'mouvements.user');
+        $medicament->load('mouvements.user');
+        if ($medicament->fournisseur_id) {
+            $medicament->load('fournisseur');
+        }
+        return $medicament;
     }
 
     public function update(Request $request, Medicament $medicament)

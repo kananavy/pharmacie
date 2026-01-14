@@ -31,6 +31,23 @@ export const useAuthStore = defineStore('auth', {
                 this.loading = false
             }
         },
+        async register(credentials: any) {
+            this.loading = true
+            this.error = null
+            try {
+                const response = await axios.post('/register', credentials)
+                this.token = response.data.access_token
+                this.user = response.data.user
+                localStorage.setItem('token', this.token as string)
+                localStorage.setItem('user', JSON.stringify(this.user))
+                return true
+            } catch (err: any) {
+                this.error = err.response?.data?.message || 'Erreur lors de l\'inscription'
+                return false
+            } finally {
+                this.loading = false
+            }
+        },
         async logout() {
             try {
                 await axios.post('/logout')
