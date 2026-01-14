@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import axios from '../api/axios'
+import QrcodeVue from 'qrcode.vue'
 import { 
   ShoppingCart, 
   Plus, 
@@ -260,6 +261,10 @@ const printTicket = () => {
         <div class="text-center mb-4 border-b-2 border-dashed border-slate-300 pb-4">
           <h1 class="text-xl font-bold">PHARMACIE PRO</h1>
           <p class="text-xs">Ticket de Commande</p>
+          <div class="flex justify-center mt-3 mb-1">
+            <qrcode-vue :value="lastTicket.numero_ticket" :size="100" level="H" />
+          </div>
+          <p class="text-[10px] font-mono">{{ lastTicket.numero_ticket }}</p>
         </div>
 
         <div class="space-y-1 mb-4 text-xs">

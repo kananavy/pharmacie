@@ -33,6 +33,13 @@ const modePaiement = ref<'especes' | 'carte' | 'mobile_money'>('especes')
 const montantRecu = ref<number>(0)
 const showSuccess = ref(false)
 const lastVente = ref<any>(null)
+const searchInput = ref<HTMLInputElement | null>(null)
+
+// Auto-focus the search field for the scanner
+import { onMounted } from 'vue'
+onMounted(() => {
+  searchInput.value?.focus()
+})
 
 const montantRendu = computed(() => {
   if (!commande.value) return 0
@@ -44,14 +51,10 @@ const canPay = computed(() => {
 })
 
 const searchCommande = async () => {
-  if (!ticketNumber.value.trim()) {
-    alert('Veuillez saisir un numéro de ticket')
-    return
-  }
+  if (!ticketNumber.value.trim()) return
 
   loading.value = true
   try {
-    // Search by ticket number in pending orders
     const res = await axios.get('/commandes/pending/all')
     const found = res.data.find((c: Commande) => c.numero_ticket === ticketNumber.value.trim())
     
@@ -61,6 +64,8 @@ const searchCommande = async () => {
     } else {
       alert('Commande non trouvée ou déjà payée')
       commande.value = null
+      ticketNumber.value = ''
+      searchInput.value?.focus()
     }
   } catch (err) {
     alert('Erreur lors de la recherche')
@@ -150,13 +155,14 @@ const cancelSearch = () => {
           <h2 class="text-sm font-semibold text-slate-900 mb-4">Rechercher une commande</h2>
           
           <div class="flex gap-3">
-            <div class="flex-1 flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-lg border border-slate-200">
+            <div class="flex-1 flex items-center gap-3 bg-slate-50 px-4 py-3 rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all">
               <Search class="w-5 h-5 text-slate-400" />
               <input
+                ref="searchInput"
                 v-model="ticketNumber"
                 @keyup.enter="searchCommande"
                 type="text"
-                placeholder="Ex: CMD-20260114-001"
+                placeholder="Scanner ou saisir ticket..."
                 class="bg-transparent border-none outline-none w-full text-sm text-slate-700 font-mono"
               />
             </div>
