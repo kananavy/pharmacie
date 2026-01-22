@@ -15,11 +15,17 @@ class Patient extends Model
         'date_naissance',
         'telephone',
         'adresse',
-        'numero_dossier'
+        'numero_dossier',
+        'assurance_id'
     ];
 
     public function ordonnances()
     {
         return $this->hasMany(Ordonnance::class);
+    }
+
+    public function assurance()
+    {
+        return $this->belongsTo(Assurance::class);
     }
 }

@@ -12,16 +12,25 @@ class Vente extends Model
     protected $fillable = [
         'total',
         'user_id',
+        'patient_id',
         'ordonnance_id',
         'commande_id',
         'mode_paiement',
         'montant_recu',
-        'montant_rendu'
+        'montant_rendu',
+        'montant_paye_client',
+        'montant_du_par_assurance',
+        'status'
     ];
 
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function patient()
+    {
+        return $this->belongsTo(Patient::class);
     }
 
     public function ordonnance()

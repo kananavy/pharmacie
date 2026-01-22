@@ -20,14 +20,32 @@ class Medicament extends Model
         'quantite_par_emballage',
         'prix',
         'prix_achat',
-        'stock',
-        'date_expiration',
         'ordonnance_requise',
         'seuil_alerte',
         'emplacement',
         'max_stock',
-        'fournisseur_id'
+        'fournisseur_id',
+        'unite_stock',
+        'unites_par_boite',
+        'prix_unitaire'
     ];
+
+    /**
+     * Get the lots for the medicament.
+     */
+    public function lots()
+    {
+        return $this->hasMany(Lot::class);
+    }
+
+    /**
+     * Get the total stock quantity from all lots.
+     */
+    public function getQuantiteTotaleAttribute()
+    {
+        return $this->lots()->sum('quantite_actuelle');
+    }
+
 
     public function details()
     {

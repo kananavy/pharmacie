@@ -28,6 +28,15 @@ interface Mouvement {
   user?: { name: string };
 }
 
+interface Lot {
+  id: number;
+  numero_lot: string;
+  quantite_actuelle: number;
+  date_expiration: string;
+  prix_achat: number;
+  fournisseur?: { nom: string };
+}
+
 interface Medicament {
   id: number;
   nom: string;
@@ -37,8 +46,6 @@ interface Medicament {
   quantite_par_emballage: number;
   prix: number;
   prix_achat: number;
-  stock: number;
-  date_expiration: string;
   ordonnance_requise: boolean;
   seuil_alerte: number;
   max_stock: number;
@@ -46,6 +53,12 @@ interface Medicament {
   fournisseur_id: number | string;
   fournisseur?: { nom: string };
   mouvements?: Mouvement[];
+  unites_par_boite?: number;
+  unite_stock?: string;
+  prix_unitaire?: number;
+  // New properties from backend
+  lots_sum_quantite_actuelle: number;
+  lots?: Lot[];
 }
 
 const medications = ref<Medicament[]>([])
@@ -66,22 +79,17 @@ const form = ref<Partial<Medicament>>({
   quantite_par_emballage: 1,
   prix: 0,
   prix_achat: 0,
-  stock: 0,
-  date_expiration: '',
   ordonnance_requise: false,
   seuil_alerte: 10,
   max_stock: 100,
   emplacement: '',
-  fournisseur_id: ''
+  fournisseur_id: '',
+  unites_par_boite: 1,
+  unite_stock: 'boite',
+  prix_unitaire: 0
 })
 
 const categories = ['Antibiotique', 'Analgésique', 'Vitamines', 'Dermatologie', 'Cardiologie', 'Diabète', 'Gastro-entérologie']
-
-const adjustmentForm = ref({
-  quantite: 0,
-  type: 'reception',
-  motif: ''
-})
 
 onMounted(async () => {
   await Promise.all([fetchMedications(), fetchSuppliers()])
@@ -113,17 +121,17 @@ const filteredMedications = computed(() => {
   const q = searchQuery.value.toLowerCase()
   return medications.value.filter(m => 
     m.nom.toLowerCase().includes(q) || 
-    m.code.toLowerCase().includes(q) ||
-    m.categorie.toLowerCase().includes(q)
+    (m.code && m.code.toLowerCase().includes(q)) ||
+    (m.categorie && m.categorie.toLowerCase().includes(q))
   )
 })
 
 const openAddModal = () => {
   modalMode.value = 'add'
   form.value = {
-    id: undefined, nom: '', code: '', categorie: '', unite_emballage: 'Boîte',
-    quantite_par_emballage: 1, prix: 0, prix_achat: 0, stock: 0,
-    date_expiration: '', ordonnance_requise: false, seuil_alerte: 10,
+    nom: '', code: '', categorie: '', unite_emballage: 'Boîte',
+    quantite_par_emballage: 1, prix: 0, prix_achat: 0,
+    ordonnance_requise: false, seuil_alerte: 10,
     max_stock: 100, emplacement: '', fournisseur_id: ''
   }
   showModal.value = true
@@ -146,6 +154,7 @@ const saveMedication = async () => {
     showModal.value = false
   } catch (err) {
     alert('Erreur lors de l\'enregistrement')
+    console.error(err);
   }
 }
 
@@ -160,23 +169,14 @@ const deleteMedication = async (id: number) => {
   }
 }
 
-const selectMed = (med: Medicament) => {
-  selectedMed.value = med
-  activeTab.value = 'details'
-}
-
-const processAdjustment = async () => {
-  if (!selectedMed.value || adjustmentForm.value.quantite === 0) return
+const selectMed = async (med: Medicament) => {
   try {
-    await axios.post(`/medicaments/${selectedMed.value.id}/ajuster`, adjustmentForm.value)
-    await fetchMedications()
-    // Refresh selected med details
-    const res = await axios.get(`/medicaments/${selectedMed.value.id}`)
+    const res = await axios.get(`/medicaments/${med.id}`)
     selectedMed.value = res.data
-    adjustmentForm.value = { quantite: 0, type: 'reception', motif: '' }
-    alert('Stock mis à jour avec succès')
+    activeTab.value = 'details'
   } catch (err) {
-    alert('Erreur lors de l\'ajustement')
+    alert('Erreur lors de la récupération des détails du médicament.')
+    console.error(err)
   }
 }
 
@@ -275,12 +275,12 @@ const formatPrice = (price: number) => formatCurrency(price)
                   <span
                     :class="[
                       'inline-flex items-center justify-center min-w-[40px] px-2 py-0.5 rounded-full text-[10px] font-semibold',
-                      med.stock <= med.seuil_alerte
+                      med.lots_sum_quantite_actuelle <= med.seuil_alerte
                         ? 'bg-rose-50 text-rose-600'
                         : 'bg-emerald-50 text-emerald-700'
                     ]"
                   >
-                    {{ med.stock }}
+                    {{ med.lots_sum_quantite_actuelle }}
                   </span>
                 </td>
                 <td class="px-3 py-2 text-[11px] text-slate-600 font-mono">
@@ -339,86 +339,12 @@ const formatPrice = (price: number) => formatCurrency(price)
                 </div>
               </div>
             </div>
-            <div class="flex items-center justify-between text-[11px] text-slate-600">
-              <span>Valeur stock</span>
-              <span class="font-mono font-semibold text-slate-800">
-                {{ formatPrice(selectedMed.stock * selectedMed.prix) }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Paramètres stock -->
-          <div class="border border-slate-200 rounded p-3 space-y-2">
-            <div class="flex items-center gap-2 text-[11px] text-slate-700">
-              <Settings class="w-3.5 h-3.5 text-slate-500" />
-              <span class="font-semibold">Paramètres de stock</span>
-            </div>
-            <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-              <div>
-                <div class="text-slate-400">Seuil min.</div>
-                <div class="font-mono font-semibold">{{ selectedMed.seuil_alerte }}</div>
-              </div>
-              <div>
-                <div class="text-slate-400">Stock max.</div>
-                <div class="font-mono font-semibold">{{ selectedMed.max_stock }}</div>
-              </div>
-              <div class="col-span-2">
-                <div class="text-slate-400">Emplacement</div>
-                <div class="font-semibold">
-                  {{ selectedMed.emplacement || 'Non renseigné' }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Logistique -->
-          <div class="border border-slate-200 rounded p-3 space-y-2">
-            <div class="flex items-center gap-2 text-[11px] text-slate-700">
-              <Truck class="w-3.5 h-3.5 text-slate-500" />
-              <span class="font-semibold">Fournisseur & prix</span>
-            </div>
-            <div class="space-y-1 text-[11px] text-slate-600">
-              <div class="flex items-center justify-between">
-                <span>Fournisseur</span>
-                <span class="font-semibold">
-                  {{ selectedMed.fournisseur?.nom || 'Non défini' }}
+              <div class="flex items-center justify-between text-[11px] text-slate-600">
+                <span>Valeur stock</span>
+                <span class="font-mono font-semibold text-slate-800">
+                  {{ formatPrice(selectedMed.lots_sum_quantite_actuelle * selectedMed.prix) }}
                 </span>
               </div>
-              <div class="flex items-center justify-between">
-                <span>Prix d’achat (pkg)</span>
-                <span class="font-mono">
-                  {{ formatPrice(selectedMed.prix_achat) }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Ajustement rapide -->
-          <div class="border border-slate-200 rounded p-3 space-y-2">
-            <div class="text-[11px] font-semibold text-slate-700">
-              Ajustement de stock
-            </div>
-            <div class="flex gap-2">
-              <select
-                v-model="adjustmentForm.type"
-                class="w-24 border border-slate-300 rounded px-2 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
-              >
-                <option value="reception">Entrée</option>
-                <option value="ajustement">Régul.</option>
-              </select>
-              <input
-                v-model.number="adjustmentForm.quantite"
-                type="number"
-                class="w-24 border border-slate-300 rounded px-2 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                placeholder="Qté"
-              />
-              <button
-                @click="processAdjustment"
-                class="flex-1 inline-flex items-center justify-center px-2 py-1.5 rounded text-[11px] font-semibold border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
-              >
-                Mettre à jour
-              </button>
-            </div>
           </div>
         </div>
 
@@ -524,32 +450,30 @@ const formatPrice = (price: number) => formatCurrency(price)
               </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-100 pt-3 mt-1">
               <div class="space-y-1">
-                <label class="block text-[11px] text-slate-600">Unité emballage</label>
-                <input
-                  v-model="form.unite_emballage"
-                  class="w-full border border-slate-300 rounded px-2.5 py-2 text-xs outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                />
+                 <label class="block text-[11px] text-slate-600 font-bold">Unités par Boîte</label>
+                 <input
+                   v-model.number="form.unites_par_boite"
+                   type="number"
+                   min="1"
+                   class="w-full border border-slate-300 rounded px-2.5 py-2 text-xs outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+                   placeholder="Ex: 28 (comprimés)"
+                 />
               </div>
               <div class="space-y-1">
-                <label class="block text-[11px] text-slate-600">Qté / emballage</label>
-                <input
-                  v-model.number="form.quantite_par_emballage"
-                  type="number"
-                  class="w-full border border-slate-300 rounded px-2.5 py-2 text-xs outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                />
-              </div>
-              <div class="space-y-1">
-                <label class="block text-[11px] text-slate-600">Date d’expiration</label>
-                <input
-                  v-model="form.date_expiration"
-                  type="date"
-                  required
-                  class="w-full border border-slate-300 rounded px-2.5 py-2 text-xs outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                />
+                 <label class="block text-[11px] text-slate-600 font-bold">Prix Unitaire (Détail)</label>
+                 <input
+                   v-model.number="form.prix_unitaire"
+                   type="number"
+                   step="0.01"
+                   class="w-full border border-slate-300 rounded px-2.5 py-2 text-xs outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+                   placeholder="Ex: 500 Ar / plaquette"
+                 />
               </div>
             </div>
+
+
 
             <div class="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
               <div class="flex items-center gap-2 text-[11px] text-slate-600">

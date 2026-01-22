@@ -16,7 +16,12 @@ import {
   UserCircle,
   Settings2, 
   ChevronRight,
-  CreditCard
+  CreditCard,
+  Shield,
+  PackagePlus,
+  Banknote,
+  ReceiptText,
+  History
 } from 'lucide-vue-next'
 import { ref, computed } from 'vue'
 
@@ -27,10 +32,15 @@ const allNavigation = [
   { name: 'Tableau de bord', icon: LayoutDashboard, path: '/', roles: ['admin', 'vendeur', 'caissier'] },
   { name: 'Vente (Guichet)', icon: ShoppingCart, path: '/orders', roles: ['admin', 'vendeur'] },
   { name: 'Caisse', icon: CreditCard, path: '/cashier', roles: ['admin', 'caissier'] },
+  { name: 'Clôture de Caisse', icon: Banknote, path: '/cash-closing', roles: ['admin', 'caissier'] },
+  { name: 'Historique des Ventes', icon: ReceiptText, path: '/sales-history', roles: ['admin', 'caissier'] },
   { name: 'Médicaments', icon: Pill, path: '/medications', roles: ['admin'] },
+  { name: 'Réception Stock', icon: PackagePlus, path: '/stock-reception', roles: ['admin'] },
   { name: 'Ordonnances', icon: FileText, path: '/prescriptions', roles: ['admin', 'vendeur'] },
   { name: 'Patients', icon: UserCircle, path: '/patients', roles: ['admin', 'vendeur'] },
   { name: 'Fournisseurs', icon: Users, path: '/suppliers', roles: ['admin'] },
+  { name: 'Utilisateurs', icon: Shield, path: '/users', roles: ['admin'] },
+  { name: 'Journal d\'Audit', icon: History, path: '/audit-logs', roles: ['admin'] },
   { name: 'Rapports', icon: BarChart3, path: '/reports', roles: ['admin'] },
   { name: 'Paramètres', icon: Settings2, path: '/settings', roles: ['admin'] }
 ]

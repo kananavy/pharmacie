@@ -11,7 +11,17 @@ class DetailVente extends Model
 
     protected $table = 'details_vente';
 
-    protected $fillable = ['vente_id', 'medicament_id', 'quantite', 'prix_unitaire'];
+    protected $fillable = [
+        'vente_id',
+        'medicament_id',
+        'lot_id',
+        'quantite',
+        'prix_unitaire',
+        'type_vente',
+        'assurance_taux_applique',
+        'part_client_item',
+        'part_assurance_item'
+    ];
 
     public function vente()
     {
@@ -21,5 +31,13 @@ class DetailVente extends Model
     public function medicament()
     {
         return $this->belongsTo(Medicament::class);
+    }
+
+    /**
+     * Get the lot that was sold.
+     */
+    public function lot()
+    {
+        return $this->belongsTo(Lot::class);
     }
 }

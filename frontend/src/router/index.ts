@@ -10,12 +10,7 @@ const router = createRouter({
             component: () => import('../views/LoginView.vue'),
             meta: { guest: true }
         },
-        {
-            path: '/register',
-            name: 'register',
-            component: () => import('../views/RegisterView.vue'),
-            meta: { guest: true }
-        },
+
         {
             path: '/',
             component: () => import('../layouts/DashboardLayout.vue'),
@@ -40,9 +35,27 @@ const router = createRouter({
                     meta: { roles: ['admin', 'caissier'] }
                 },
                 {
+                    path: 'cash-closing',
+                    name: 'cash-closing',
+                    component: () => import('../views/CashierClosingView.vue'),
+                    meta: { roles: ['admin', 'caissier'] }
+                },
+                {
+                    path: 'sales-history',
+                    name: 'sales-history',
+                    component: () => import('../views/SalesHistoryView.vue'),
+                    meta: { roles: ['admin', 'caissier'] }
+                },
+                {
                     path: 'medications',
                     name: 'medications',
                     component: () => import('../views/MedicationsView.vue'),
+                    meta: { roles: ['admin'] }
+                },
+                {
+                    path: 'stock-reception',
+                    name: 'stock-reception',
+                    component: () => import('../views/ReceptionView.vue'),
                     meta: { roles: ['admin'] }
                 },
                 {
@@ -73,6 +86,18 @@ const router = createRouter({
                     path: 'settings',
                     name: 'settings',
                     component: () => import('../views/SettingsView.vue'),
+                    meta: { roles: ['admin'] }
+                },
+                {
+                    path: 'users',
+                    name: 'users',
+                    component: () => import('../views/UserManagementView.vue'),
+                    meta: { roles: ['admin'] }
+                },
+                {
+                    path: 'audit-logs',
+                    name: 'audit-logs',
+                    component: () => import('../views/AuditLogView.vue'),
                     meta: { roles: ['admin'] }
                 }
             ]

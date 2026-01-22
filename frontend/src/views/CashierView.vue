@@ -18,9 +18,23 @@ import {
   Loader2
 } from 'lucide-vue-next'
 
+// --- INTERFACES ---
+
+interface Medicament {
+  id: number
+  nom: string
+  code: string
+  prix: number
+  stock: number
+  // Unit fields
+  unites_par_boite?: number
+  stock_vrac?: number
+  prix_unitaire?: number
+}
+
 interface CommandeDetail {
   id: number
-  medicament: { nom: string }
+  medicament: { nom: string, prix?: number }
   quantite: number
   prix_unitaire: number
 }
@@ -40,43 +54,122 @@ interface Vente {
   total: number
   montant_rendu: number
   commande_id?: number
-  // Extended fields for receipt
   numero_ticket?: string
-  details?: CommandeDetail[]
+  details?: any[]
   vendeur_nom?: string
   mode_paiement?: string
   montant_recu?: number
   date_paiement?: string
+  user?: { name: string }
 }
 
+interface CartItem {
+  medicament: Medicament
+  quantite: number
+  prix_unitaire?: number
+  type_vente?: 'boite' | 'unite'
+}
+
+// --- STATE ---
+
+const viewMode = ref<'ticket' | 'direct'>('ticket')
 const ticketNumber = ref('')
 const commande = ref<Commande | null>(null)
 const loading = ref(false)
 const modePaiement = ref<'especes' | 'carte' | 'mobile_money'>('especes')
-const montantRecu = ref<number>(0)
+const montantRecu = ref<number | null>(null)
 const showSuccess = ref(false)
 const lastVente = ref<Vente | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const errorMessage = ref<string | null>(null)
+
+// Scanner
 const scannerInitializing = ref(false)
 const isScannerActive = ref(false)
-
 let scanner: Html5QrcodeScanner | null = null
 let scannerCleanupPromise: Promise<void> | null = null
 
-// Cleanup scanner safely
-const cleanupScanner = async (): Promise<void> => {
-  if (scannerCleanupPromise) {
-    await scannerCleanupPromise
+// Direct Sale
+const productSearch = ref('')
+const isSearching = ref(false)
+const searchResults = ref<Medicament[]>([])
+const cart = ref<CartItem[]>([])
+
+// --- COMPUTED ---
+
+const activeItems = computed(() => {
+  if (viewMode.value === 'ticket') {
+    return commande.value?.details || []
+  } else {
+    return cart.value
   }
+})
+
+const currentTotal = computed(() => {
+   if (viewMode.value === 'ticket') {
+      return commande.value?.total || 0
+   } else {
+      return cart.value.reduce((sum, item) => sum + ((item.prix_unitaire || item.medicament.prix) * item.quantite), 0)
+   }
+})
+
+const montantRendu = computed(() => {
+  const recu = montantRecu.value || 0
+  if (currentTotal.value === 0) return 0
+  return Math.max(0, recu - currentTotal.value)
+})
+
+const canPay = computed(() => {
+  const total = currentTotal.value
+  const recu = montantRecu.value || 0
   
+  if (total <= 0) return false
+  if (recu < total) return false
+  
+  return true
+})
+
+const quickAmounts = computed(() => {
+  const total = currentTotal.value
+  if (total <= 0) return []
+  
+  const rounded = [
+    Math.ceil(total / 1000) * 1000,
+    Math.ceil(total / 5000) * 5000,
+    Math.ceil(total / 10000) * 10000,
+  ]
+  const bills = [1000, 2000, 5000, 10000, 20000]
+  const nextBills = bills.filter(b => b > total).slice(0, 2)
+  
+  return [...new Set([total, ...rounded, ...nextBills])].sort((a,b) => a-b).slice(0, 5)
+})
+
+// --- METHODS ---
+
+const switchMode = (mode: 'ticket' | 'direct') => {
+  viewMode.value = mode
+  errorMessage.value = null
+  showSuccess.value = false
+  
+  if (mode === 'direct') {
+    commande.value = null
+    ticketNumber.value = ''
+    if (isScannerActive.value) stopScanner()
+  } else {
+    // Switching to ticket
+    nextTick(() => searchInput.value?.focus())
+  }
+}
+
+const formatCurrency = (amount: number): string => {
+  return new Intl.NumberFormat('fr-MG').format(amount)
+}
+
+// Scanner Logic
+const cleanupScanner = async (): Promise<void> => {
+  if (scannerCleanupPromise) await scannerCleanupPromise
   if (scanner) {
-    // Attempt to clear
-    try {
-      await scanner.clear()
-    } catch (err) {
-      console.warn('Scanner clear error (ignored):', err)
-    }
+    try { await scanner.clear() } catch (err) { console.warn('Scanner clear error:', err) }
     scanner = null
   }
 }
@@ -84,33 +177,20 @@ const cleanupScanner = async (): Promise<void> => {
 const startScanner = async () => {
   if (scannerInitializing.value) return
   scannerInitializing.value = true
-
   await cleanupScanner()
-  
-  // Set flag to true to render the container
   isScannerActive.value = true
-  
-  // Wait for DOM
   await nextTick()
   
   try {
-     // Extra safety delay for rendering
     await new Promise(r => setTimeout(r, 100))
-
     const element = document.getElementById('qr-reader')
     if (!element) throw new Error('Element scanner introuvable')
 
     scanner = new Html5QrcodeScanner(
       'qr-reader',
-      { 
-        fps: 10, 
-        qrbox: { width: 250, height: 250 },
-        aspectRatio: 1.0,
-        showTorchButtonIfSupported: true
-      },
+      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0, showTorchButtonIfSupported: true },
       false
     )
-    
     scanner.render(onScanSuccess, onScanFailure)
   } catch (err: any) {
     console.error('Scanner init error:', err)
@@ -129,7 +209,6 @@ const stopScanner = async () => {
 const toggleScanner = async () => {
   if (isScannerActive.value) {
     await stopScanner()
-    // Focus manual input when closing scanner
     setTimeout(() => searchInput.value?.focus(), 100)
   } else {
     await startScanner()
@@ -143,12 +222,9 @@ const onScanSuccess = (decodedText: string) => {
   }
 }
 
-const onScanFailure = (error: any) => {
-  // Ignore scan errors
-}
+const onScanFailure = (error: any) => { /* ignore */ }
 
 onMounted(() => {
-  // Default: Scanner OFF, Manual Focus
   searchInput.value?.focus()
 })
 
@@ -156,19 +232,7 @@ onUnmounted(() => {
   stopScanner()
 })
 
-const montantRendu = computed(() => {
-  if (!commande.value) return 0
-  return Math.max(0, montantRecu.value - commande.value.total)
-})
-
-const canPay = computed(() => {
-  return commande.value && montantRecu.value >= commande.value.total
-})
-
-const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('fr-MG').format(amount)
-}
-
+// Ticket Search
 const searchCommande = async () => {
   if (!ticketNumber.value.trim()) return
 
@@ -181,29 +245,145 @@ const searchCommande = async () => {
     if (found) {
       commande.value = found
       montantRecu.value = found.total
-      
-      // If we are scanning, you might want to stop to focus on payment
-      // For now, let's stop scanner to avoid background resource usage
-      if (isScannerActive.value) {
-         await stopScanner()
-      }
+      if (isScannerActive.value) await stopScanner()
     } else {
       errorMessage.value = 'Commande non trouvée ou déjà payée'
       commande.value = null
       ticketNumber.value = ''
-      if (!isScannerActive.value) {
-         searchInput.value?.focus()
-      }
+      if (!isScannerActive.value) searchInput.value?.focus()
     }
   } catch (err: any) {
     errorMessage.value = err.response?.data?.message || 'Erreur lors de la recherche'
-    console.error(err)
   } finally {
     loading.value = false
   }
 }
 
-const processPayment = async () => {
+const cancelSearch = () => {
+  commande.value = null
+  ticketNumber.value = ''
+  montantRecu.value = 0
+  errorMessage.value = null
+  if (!isScannerActive.value) searchInput.value?.focus()
+}
+
+// Direct Sale Logic
+let searchTimer: any
+const handleProductSearch = () => {
+  clearTimeout(searchTimer)
+  if (productSearch.value.length < 2) {
+    searchResults.value = []
+    return
+  }
+  
+  isSearching.value = true
+  searchTimer = setTimeout(async () => {
+    try {
+      const res = await axios.get('/medicaments', { params: { search: productSearch.value } })
+      searchResults.value = res.data
+    } catch (e) {
+      console.error(e)
+    } finally {
+      isSearching.value = false
+    }
+  }, 300)
+}
+
+const addToCart = (product: Medicament) => {
+   const existing = cart.value.find(i => i.medicament.id === product.id && i.type_vente === 'boite')
+   
+   if (existing) {
+      if (existing.quantite < product.stock) {
+         existing.quantite++
+      } else {
+         errorMessage.value = `Stock global insuffisant pour ${product.nom}`
+         setTimeout(() => errorMessage.value = null, 3000)
+      }
+   } else {
+      cart.value.push({ 
+        medicament: product, 
+        quantite: 1,
+        type_vente: 'boite',
+        prix_unitaire: product.prix
+      })
+   }
+   productSearch.value = ''
+   searchResults.value = []
+}
+
+const toggleUnit = (index: number) => {
+   const item = cart.value[index]
+   if (!item) return
+   
+   // Check if product allows units
+   if (!item.medicament.unites_par_boite || item.medicament.unites_par_boite <= 1 || !item.medicament.prix_unitaire) {
+      errorMessage.value = "Ce produit ne se vend pas à l'unité"
+      setTimeout(() => errorMessage.value = null, 2000)
+      return
+   }
+
+   const newType = item.type_vente === 'boite' ? 'unite' : 'boite'
+   
+   // Reset qty to 1 when switching to avoid stock issues
+   item.quantite = 1 
+   item.type_vente = newType as 'boite' | 'unite'
+   item.prix_unitaire = newType === 'unite' ? item.medicament.prix_unitaire : item.medicament.prix
+}
+
+const updateQty = (index: number, change: number) => {
+   const item = cart.value[index]
+   if (!item) return
+   
+   const newQty = item.quantite + change
+   
+   if (newQty <= 0) {
+      cart.value.splice(index, 1)
+      return
+   }
+
+   // Validate Stock
+   let maxQty = 0
+   if (item.type_vente === 'unite') {
+       // Total units = (Full Boxes * UnitsPerBox) + LooseUnits
+       const stockBoxes = item.medicament.stock || 0
+       const unitsPerBox = item.medicament.unites_par_boite || 1
+       const looseUnits = item.medicament.stock_vrac || 0
+       maxQty = (stockBoxes * unitsPerBox) + looseUnits
+   } else {
+       // Box mode
+       maxQty = item.medicament.stock
+   }
+
+   if (newQty <= maxQty) {
+      item.quantite = newQty
+   } else {
+      errorMessage.value = `Stock insuffisant (${maxQty} disponible)`
+      setTimeout(() => errorMessage.value = null, 3000)
+   }
+}
+
+const removeFromCart = (index: number) => {
+   cart.value.splice(index, 1)
+}
+
+const clearCart = () => {
+   cart.value = []
+   montantRecu.value = null
+   modePaiement.value = 'especes'
+   searchResults.value = []
+   productSearch.value = ''
+}
+
+// Payment Processing
+const processTransaction = async () => {
+  if (viewMode.value === 'ticket') {
+    await processTicketPayment()
+  } else {
+    await processDirectSale()
+  }
+}
+
+const processTicketPayment = async () => {
   if (!commande.value || !canPay.value) return
 
   loading.value = true
@@ -215,8 +395,7 @@ const processPayment = async () => {
       montant_recu: montantRecu.value
     })
 
-    // Capture receipt data BEFORE clearing commande
-    const receiptData: Vente = {
+    lastVente.value = {
         ...res.data,
         numero_ticket: commande.value.numero_ticket,
         details: commande.value.details,
@@ -226,23 +405,12 @@ const processPayment = async () => {
         date_paiement: new Date().toLocaleString('fr-FR')
     }
     
-    lastVente.value = receiptData
     showSuccess.value = true
-
-    // Reset form
     commande.value = null
     ticketNumber.value = ''
     montantRecu.value = 0
     modePaiement.value = 'especes'
 
-    // Auto-hide after 5s
-    setTimeout(() => {
-      showSuccess.value = false
-      // Don't auto-restart scanner in split view, let user decide?
-      // Or auto-restart if they were scanning?
-      // Let's reset to manual by default to be safe
-      if (searchInput.value) searchInput.value.focus()
-    }, 5000)
   } catch (err: any) {
     errorMessage.value = err.response?.data?.message || 'Erreur lors du paiement'
   } finally {
@@ -250,38 +418,58 @@ const processPayment = async () => {
   }
 }
 
-const printReceipt = () => {
-  window.print()
-}
-
-const cancelSearch = () => {
-  commande.value = null
-  ticketNumber.value = ''
-  montantRecu.value = 0
-  errorMessage.value = null
-  
-  if (!isScannerActive.value) {
-     searchInput.value?.focus()
-  }
+const processDirectSale = async () => {
+   if (cart.value.length === 0) return
+   loading.value = true
+   errorMessage.value = null
+   
+   try {
+      const payload = {
+         items: cart.value.map(i => ({
+            medicament_id: i.medicament.id,
+            quantite: i.quantite,
+            type_vente: i.type_vente
+         })),
+         mode_paiement: modePaiement.value,
+         montant_recu: montantRecu.value || currentTotal.value
+      }
+      
+      const res = await axios.post('/ventes', payload)
+      // Assuming response includes details with medicament relations
+      
+      lastVente.value = {
+         ...res.data,
+         numero_ticket: null, // No ticket for direct sale
+         vendeur_nom: res.data.user?.name || 'Moi',
+         mode_paiement: modePaiement.value,
+         montant_recu: montantRecu.value || currentTotal.value,
+         date_paiement: new Date().toLocaleString('fr-FR'),
+         // Ensure details structure matches for print
+         details: res.data.details || [] 
+      }
+      
+      showSuccess.value = true
+      clearCart()
+      
+   } catch (err: any) {
+      errorMessage.value = err.response?.data?.message || 'Erreur vente'
+   } finally {
+      loading.value = false
+   }
 }
 
 const dismissSuccess = async () => {
   showSuccess.value = false
-  // Return focus
-  searchInput.value?.focus()
+  if (viewMode.value === 'ticket') {
+     searchInput.value?.focus()
+  } else {
+     // maybe focus search
+  }
 }
 
-// Quick amount buttons for cash payments
-const quickAmounts = computed(() => {
-  if (!commande.value) return []
-  const total = commande.value.total
-  const rounded = [
-    Math.ceil(total / 1000) * 1000,
-    Math.ceil(total / 5000) * 5000,
-    Math.ceil(total / 10000) * 10000,
-  ]
-  return [...new Set([total, ...rounded])].slice(0, 4)
-})
+const printReceipt = () => {
+  window.print()
+}
 </script>
 
 <template>
@@ -293,9 +481,25 @@ const quickAmounts = computed(() => {
           <CreditCard class="w-6 h-6" />
         </div>
         <div>
-          <h1 class="text-2xl font-semibold text-slate-900">Caisse Mobile</h1>
-          <p class="text-xs text-slate-500">Gestion des encaissements</p>
+          <h1 class="text-2xl font-semibold text-slate-900">Caisse & Point de Vente</h1>
+          <p class="text-xs text-slate-500">Gestion des encaissements et ventes directes</p>
         </div>
+      </div>
+      
+      <!-- View Mode Torns -->
+      <div class="flex bg-slate-100 p-1 rounded-xl">
+        <button 
+          @click="switchMode('ticket')" 
+          :class="['px-4 py-2 text-sm font-medium rounded-lg transition-all', viewMode === 'ticket' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700']"
+        >
+          Encaissement Ticket
+        </button>
+        <button 
+          @click="switchMode('direct')" 
+          :class="['px-4 py-2 text-sm font-medium rounded-lg transition-all', viewMode === 'direct' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700']"
+        >
+          Vente Directe
+        </button>
       </div>
     </div>
 
@@ -315,7 +519,9 @@ const quickAmounts = computed(() => {
           <div class="bg-gradient-to-br from-emerald-500 to-emerald-600 p-6 text-center text-white">
             <div class="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4"><Check class="w-8 h-8" /></div>
             <h2 class="text-2xl font-bold mb-1">Paiement Validé!</h2>
-            <p class="text-emerald-100">Ticket #{{ lastVente?.numero_ticket }}</p>
+            <p class="text-emerald-100">
+               {{ lastVente?.numero_ticket ? 'Ticket #' + lastVente?.numero_ticket : 'Vente #' + lastVente?.id }}
+            </p>
           </div>
           <div class="p-6 space-y-4">
             <div class="flex justify-between items-center py-3 border-b border-slate-100">
@@ -328,7 +534,7 @@ const quickAmounts = computed(() => {
             </div>
             <div class="grid grid-cols-2 gap-3 pt-2">
               <button @click="printReceipt" class="py-3 px-4 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 flex items-center justify-center gap-2 transition-colors"><Printer class="w-4 h-4" /> Reçu</button>
-              <button @click="showSuccess = false" class="py-3 px-4 bg-emerald-500 text-white rounded-xl font-semibold hover:bg-emerald-600 transition-colors">Prochain Client</button>
+              <button @click="dismissSuccess" class="py-3 px-4 bg-emerald-500 text-white rounded-xl font-semibold hover:bg-emerald-600 transition-colors">Prochain Client</button>
             </div>
           </div>
         </div>
@@ -338,149 +544,241 @@ const quickAmounts = computed(() => {
     <!-- MAIN SPLIT LAYOUT -->
     <div class="flex-1 grid md:grid-cols-12 gap-6 min-h-0">
       
-      <!-- LEFT COL: SEARCH & SCAN (Always Visible) -->
+      <!-- LEFT COL: INPUT & SEARCH (Scanning or Product Search) -->
       <div class="md:col-span-5 flex flex-col gap-4">
         
-        <!-- Toggle Header -->
-        <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-           <div class="flex items-center gap-2">
-             <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
-               <component :is="isScannerActive ? ScanLine : Search" class="w-5 h-5" />
-             </div>
-             <span class="font-bold text-slate-700">{{ isScannerActive ? 'Mode Scanner' : 'Recherche' }}</span>
-           </div>
-           
-           <button 
-            @click="toggleScanner"
-            class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all border-2 border-emerald-500 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-          >
-            <component :is="isScannerActive ? Keyboard : Camera" class="w-4 h-4" />
-            {{ isScannerActive ? 'Manuel' : 'Scanner' }}
-          </button>
-        </div>
-
-        <!-- MODE SCANNER -->
-        <div v-if="isScannerActive" class="bg-black rounded-xl overflow-hidden relative shadow-md aspect-square flex flex-col">
-           <div id="qr-reader" class="flex-1 w-full h-full"></div>
-           <div class="absolute bottom-4 left-0 right-0 text-center pointer-events-none">
-             <span class="bg-black/60 text-white px-3 py-1 rounded-full text-xs font-medium backdrop-blur-sm">Scanner le code QR</span>
-           </div>
-           <div v-if="scannerInitializing" class="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-              <Loader2 class="w-8 h-8 animate-spin" />
-           </div>
-        </div>
-
-        <!-- MODE MANUAL (SIMPLIFIED) -->
-        <div v-else class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-          <label class="block text-sm font-medium text-slate-700 mb-2">Numéro du Ticket</label>
-          <div class="flex gap-2">
-            <input
-              ref="searchInput"
-              v-model="ticketNumber"
-              @keyup.enter="searchCommande"
-              type="text"
-              placeholder="CMD-..."
-              class="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 uppercase font-mono"
-            />
-            <button
-                @click="searchCommande"
-                :disabled="loading || !ticketNumber"
-                class="px-4 py-2 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
+        <!-- MODE: TICKET PAYMENT -->
+        <template v-if="viewMode === 'ticket'">
+            <!-- Toggle Header -->
+            <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+               <div class="flex items-center gap-2">
+                 <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                   <component :is="isScannerActive ? ScanLine : Search" class="w-5 h-5" />
+                 </div>
+                 <span class="font-bold text-slate-700">{{ isScannerActive ? 'Mode Scanner' : 'Recherche Ticket' }}</span>
+               </div>
+               
+               <button 
+                @click="toggleScanner"
+                class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all border-2 border-emerald-500 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
               >
-                <Search v-if="!loading" class="w-4 h-4" />
-                <Loader2 v-else class="w-4 h-4 animate-spin" />
+                <component :is="isScannerActive ? Keyboard : Camera" class="w-4 h-4" />
+                {{ isScannerActive ? 'Manuel' : 'Scanner' }}
               </button>
-          </div>
-          <p class="text-xs text-slate-500 mt-2">Saisissez la référence complète (ex: CMD-2026-001)</p>
-        </div>
+            </div>
+    
+            <!-- CAMERA -->
+            <div v-if="isScannerActive" class="bg-black rounded-xl overflow-hidden relative shadow-md aspect-square flex flex-col">
+               <div id="qr-reader" class="flex-1 w-full h-full"></div>
+               <div class="absolute bottom-4 left-0 right-0 text-center pointer-events-none">
+                 <span class="bg-black/60 text-white px-3 py-1 rounded-full text-xs font-medium backdrop-blur-sm">Scanner le code QR</span>
+               </div>
+               <div v-if="scannerInitializing" class="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
+                  <Loader2 class="w-8 h-8 animate-spin" />
+               </div>
+            </div>
+    
+            <!-- MANUAL INPUT -->
+            <div v-else class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+              <label class="block text-sm font-medium text-slate-700 mb-2">Numéro du Ticket</label>
+              <div class="flex gap-2">
+                <input
+                  ref="searchInput"
+                  v-model="ticketNumber"
+                  @keyup.enter="searchCommande"
+                  type="text"
+                  placeholder="CMD-..."
+                  class="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 uppercase font-mono"
+                />
+                <button
+                    @click="searchCommande"
+                    :disabled="loading || !ticketNumber"
+                    class="px-4 py-2 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
+                  >
+                    <Search v-if="!loading" class="w-4 h-4" />
+                    <Loader2 v-else class="w-4 h-4 animate-spin" />
+                  </button>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">Saisissez la référence complète (ex: CMD-2026-001)</p>
+            </div>
+        </template>
+
+        <!-- MODE: DIRECT SALE -->
+        <template v-else>
+           <div class="bg-white border border-slate-200 rounded-xl flex flex-col h-full overflow-hidden shadow-sm">
+              <div class="p-4 border-b border-slate-100 bg-slate-50">
+                  <label class="block text-sm font-medium text-slate-700 mb-2">Rechercher un produit</label>
+                  <div class="relative">
+                     <Search class="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                     <input 
+                        v-model="productSearch"
+                        @input="handleProductSearch"
+                        type="text"
+                        placeholder="Nom ou Code du médicament..."
+                        class="w-full pl-9 pr-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                     >
+                     <div v-if="isSearching" class="absolute right-3 top-2.5">
+                        <Loader2 class="w-4 h-4 animate-spin text-emerald-500" />
+                     </div>
+                  </div>
+              </div>
+              
+              <div class="flex-1 overflow-y-auto p-2">
+                 <div v-if="searchResults.length > 0" class="space-y-2">
+                    <button 
+                      v-for="product in searchResults" 
+                      :key="product.id"
+                      @click="addToCart(product)"
+                      class="w-full text-left p-3 hover:bg-indigo-50 border border-slate-100 rounded-lg group transition-colors flex justify-between items-center"
+                    >
+                       <div>
+                          <p class="font-medium text-slate-900">{{ product.nom }}</p>
+                          <p class="text-xs text-slate-500">{{ product.code }} • Stock: {{ product.stock }}</p>
+                       </div>
+                       <div class="text-right">
+                          <span class="block font-bold text-emerald-600">{{ formatCurrency(product.prix) }} Ar</span>
+                          <span v-if="product.stock <= 0" class="text-[10px] text-rose-500 font-bold uppercase">Rupture</span>
+                       </div>
+                    </button>
+                 </div>
+                 <div v-else-if="productSearch.length > 2" class="text-center py-8 text-slate-400">
+                    <p>Aucun produit trouvé</p>
+                 </div>
+                 <div v-else class="text-center py-8 text-slate-400">
+                    <Search class="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p class="text-sm">Commencez la saisie pour rechercher</p>
+                 </div>
+              </div>
+           </div>
+        </template>
 
       </div>
 
-      <!-- RIGHT COL: PAYMENT DETAILS (Visible Only if Commande) -->
-      <div class="md:col-span-7 flex flex-col h-full min-h-0">
+      <!-- RIGHT COL: SUMMARY & PAYMENT (Unified for both modes) -->
+      <div class="md:col-span-7 flex flex-col h-full min-h-0 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
         
-        <div v-if="commande" class="flex flex-col h-full bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-          <!-- Order Summary Header -->
-          <div class="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-            <div>
-              <h2 class="font-bold text-slate-900 text-lg">Commande #{{ commande.numero_ticket.split('-').pop() }}</h2>
-              <p class="text-xs text-slate-500">{{ commande.vendeur.name }} • {{ new Date(commande.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</p>
-            </div>
-            <button @click="cancelSearch" class="p-2 hover:bg-slate-200 rounded-full text-slate-500">
-              <X class="w-5 h-5" />
-            </button>
-          </div>
-
-          <!-- Items List (Scrollable) -->
-          <div class="flex-1 overflow-y-auto p-4 space-y-2 bg-white">
-            <div v-for="detail in commande.details" :key="detail.id" class="flex justify-between items-center py-2 border-b border-slate-50 last:border-0">
-              <div class="flex items-center gap-3">
-                <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-1 rounded">{{ detail.quantite }}x</span>
-                <div>
-                  <p class="font-medium text-slate-900 text-sm">{{ detail.medicament.nom }}</p>
-                </div>
-              </div>
-              <span class="font-bold text-slate-700">{{ formatCurrency(detail.prix_unitaire * detail.quantite) }} Ar</span>
-            </div>
-          </div>
-
-          <!-- Payment Footer -->
-          <div class="bg-slate-50 border-t border-slate-200 p-4 space-y-4">
-             <div class="flex justify-between items-end">
-               <span class="text-sm font-medium text-slate-500">Total à payer</span>
-               <span class="text-3xl font-bold text-slate-900">{{ formatCurrency(commande.total) }} <small class="text-sm font-normal text-slate-500">Ar</small></span>
+        <!-- 1. CART / DETAILS VIEW -->
+        <div class="flex-1 flex flex-col min-h-0">
+             <!-- Header -->
+             <div class="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+               <h2 class="font-bold text-slate-900 text-lg">
+                  {{ viewMode === 'ticket' ? (commande ? `Commande #${commande.numero_ticket.split('-').pop()}` : 'Détails du Ticket') : 'Panier en cours' }}
+               </h2>
+               <div v-if="viewMode === 'ticket' && commande">
+                 <button @click="cancelSearch" class="p-2 hover:bg-slate-200 rounded-full text-slate-500">
+                   <X class="w-5 h-5" />
+                 </button>
+               </div>
+               <div v-if="viewMode === 'direct'">
+                  <button @click="clearCart" :disabled="cart.length === 0" class="text-xs text-rose-600 font-medium hover:text-rose-800 disabled:opacity-50">Vider le panier</button>
+               </div>
              </div>
+             
+             <!-- Content List -->
+             <div class="flex-1 overflow-y-auto p-4 space-y-2 bg-white relative">
+                 
+                 <!-- Empty State -->
+                 <div v-if="!activeItems || activeItems.length === 0" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 p-4 text-center">
+                    <div v-if="viewMode === 'ticket'" class="flex flex-col items-center">
+                       <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-3"><Search class="w-6 h-6 opacity-50"/></div>
+                       <p>En attente de ticket...</p>
+                    </div>
+                    <div v-else class="flex flex-col items-center">
+                       <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-3"><div class="relative"><Search class="w-5 h-5 opacity-50"/><div class="absolute -right-1 -top-1 w-2 h-2 bg-emerald-400 rounded-full"></div></div></div>
+                       <p>Panier vide. Ajoutez des produits à gauche.</p>
+                    </div>
+                 </div>
 
-             <!-- Methods -->
-             <div class="flex gap-2">
-                <button v-for="mode in ['especes', 'carte', 'mobile_money'] as const" :key="mode"
-                  @click="modePaiement = mode"
-                  :class="['flex-1 py-2 text-sm font-medium rounded-lg border transition-all flex items-center justify-center gap-2', modePaiement === mode ? 'bg-emerald-600 text-white border-emerald-600 shadow-md transform scale-105' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-500']"
-                >
-                  <Banknote v-if="mode === 'especes'" class="w-4 h-4" />
-                  <CreditCard v-if="mode === 'carte'" class="w-4 h-4" />
-                  <Smartphone v-if="mode === 'mobile_money'" class="w-4 h-4" />
-                  <span class="capitalize">{{ mode.replace('_', ' ') }}</span>
-                </button>
+                 <!-- Items -->
+                 <div v-for="(item, index) in activeItems" :key="index" class="flex justify-between items-center py-2 border-b border-slate-50 last:border-0 group">
+                    <div class="flex items-center gap-3 flex-1">
+                      <!-- Qty Control for Direct Sale -->
+                      <div v-if="viewMode === 'direct'" class="flex items-center border border-slate-200 rounded-lg overflow-hidden shrink-0">
+                         <button @click="updateQty(index, -1)" class="px-2 py-1 hover:bg-slate-100 text-slate-500">-</button>
+                         <span class="px-2 text-sm font-bold min-w-[32px] text-center">{{ item.quantite }}</span>
+                         <button @click="updateQty(index, 1)" class="px-2 py-1 hover:bg-slate-100 text-slate-600">+</button>
+                      </div>
+                      <span v-else class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-1 rounded">{{ item.quantite }}x</span>
+                      
+                      <div class="min-w-0">
+                        <p class="font-medium text-slate-900 text-sm truncate">{{ item?.medicament?.nom }}</p>
+                        <div class="flex items-center gap-2">
+                           <p class="text-[10px] text-slate-500">{{ formatCurrency(item.prix_unitaire || item?.medicament?.prix || 0) }} / {{ item.type_vente === 'unite' ? 'unité' : 'boîte' }}</p>
+                           <button 
+                              v-if="viewMode === 'direct' && item.medicament.unites_par_boite && item.medicament.unites_par_boite > 1"
+                              @click="toggleUnit(index)"
+                              class="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-200 hover:bg-slate-100 transition-colors"
+                              :class="item.type_vente === 'unite' ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-slate-600'"
+                           >
+                              {{ item.type_vente === 'unite' ? 'Unités (Détail)' : 'Boîte (Standard)' }}
+                           </button>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-4">
+                       <span class="font-bold text-slate-700">{{ formatCurrency((item.prix_unitaire || item?.medicament?.prix || 0) * item.quantite) }} Ar</span>
+                       <button v-if="viewMode === 'direct'" @click="removeFromCart(index)" class="p-1 text-slate-300 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <X class="w-4 h-4" />
+                       </button>
+                    </div>
+                 </div>
              </div>
-
-             <!-- Cash Amount & Change -->
-             <div class="grid grid-cols-2 gap-4">
-                <div class="space-y-1">
-                  <label class="text-xs font-medium text-slate-500">Montant Reçu</label>
-                  <div class="relative">
-                    <input v-model.number="montantRecu" type="number" class="w-full pl-3 pr-8 py-2 border border-slate-300 rounded-lg text-right font-bold focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="0">
-                    <span class="absolute right-3 top-2 text-xs text-slate-400">Ar</span>
-                  </div>
-                </div>
-                <div class="space-y-1">
-                  <label class="text-xs font-medium text-slate-500">Rendu</label>
-                  <div :class="['w-full px-3 py-2 border rounded-lg text-right font-bold bg-slate-100', montantRendu >= 0 ? 'text-emerald-600 border-emerald-200' : 'text-slate-400 border-slate-200']">
-                    {{ formatCurrency(montantRendu) }} Ar
-                  </div>
-                </div>
-             </div>
-
-             <!-- Quick Cash -->
-             <div v-if="modePaiement === 'especes'" class="flex gap-2 overflow-x-auto pb-1">
-                <button v-for="amount in quickAmounts" :key="amount" @click="montantRecu = amount" class="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium hover:border-emerald-500 hover:text-emerald-600 whitespace-nowrap">
-                  {{ formatCurrency(amount) }}
-                </button>
-             </div>
-
-             <button @click="processPayment" :disabled="!canPay || loading" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-emerald-500/20">
-               {{ loading ? 'Validation...' : 'Encaisser' }}
-             </button>
-          </div>
         </div>
 
-        <!-- Placeholder when no command -->
-        <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400 bg-slate-50 border border-slate-200 rounded-xl border-dashed">
-           <div class="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mb-4">
-             <Search class="w-8 h-8 opacity-50" />
-           </div>
-           <p class="font-medium">En attente de ticket...</p>
-           <p class="text-sm opacity-70">Scannez ou saisissez un numéro</p>
+        <!-- 2. PAYMENT FOOTER -->
+        <div class="bg-slate-50 border-t border-slate-200 p-4 space-y-4">
+            <div class="flex justify-between items-end">
+               <span class="text-sm font-medium text-slate-500">Total à payer</span>
+               <span class="text-3xl font-bold text-slate-900">{{ formatCurrency(currentTotal) }} <small class="text-sm font-normal text-slate-500">Ar</small></span>
+            </div>
+
+            <!-- Payment Methods -->
+            <div class="flex gap-2">
+               <button v-for="mode in ['especes', 'carte', 'mobile_money'] as const" :key="mode"
+                 @click="modePaiement = mode"
+                 :class="['flex-1 py-2 text-sm font-medium rounded-lg border transition-all flex items-center justify-center gap-2', modePaiement === mode ? 'bg-emerald-600 text-white border-emerald-600 shadow-md transform scale-105' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-500']"
+               >
+                 <Banknote v-if="mode === 'especes'" class="w-4 h-4" />
+                 <CreditCard v-if="mode === 'carte'" class="w-4 h-4" />
+                 <Smartphone v-if="mode === 'mobile_money'" class="w-4 h-4" />
+                 <span class="capitalize">{{ mode.replace('_', ' ') }}</span>
+               </button>
+            </div>
+
+            <!-- Amount Inputs -->
+            <div class="grid grid-cols-2 gap-4">
+               <div class="space-y-1">
+                 <label class="text-xs font-medium text-slate-500">Montant Reçu</label>
+                 <div class="relative">
+                   <input v-model.number="montantRecu" type="number" class="w-full pl-3 pr-8 py-2 border border-slate-300 rounded-lg text-right font-bold focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="0">
+                   <span class="absolute right-3 top-2 text-xs text-slate-400">Ar</span>
+                 </div>
+               </div>
+               <div class="space-y-1">
+                 <label class="text-xs font-medium text-slate-500">Rendu</label>
+                 <div :class="['w-full px-3 py-2 border rounded-lg text-right font-bold bg-slate-100', montantRendu >= 0 ? 'text-emerald-600 border-emerald-200' : 'text-slate-400 border-slate-200']">
+                   {{ formatCurrency(montantRendu) }} Ar
+                 </div>
+               </div>
+            </div>
+
+            <!-- Quick Cash -->
+            <div v-if="modePaiement === 'especes'" class="flex gap-2 overflow-x-auto pb-1">
+               <button v-for="amount in quickAmounts" :key="amount" @click="montantRecu = amount" class="px-3 py-1 bg-white border border-slate-200 rounded-full text-xs font-medium hover:border-emerald-500 hover:text-emerald-600 whitespace-nowrap">
+                 {{ formatCurrency(amount) }}
+               </button>
+            </div>
+
+            <!-- Action Button -->
+            <button 
+              @click="processTransaction" 
+              :disabled="!canPay || loading" 
+              class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg shadow-emerald-500/20"
+            >
+               <span v-if="loading" class="flex items-center justify-center gap-2"><Loader2 class="w-5 h-5 animate-spin" /> Traitement...</span>
+               <span v-else>{{ viewMode === 'ticket' ? 'Encaisser Ticket' : 'Valider la Vente' }}</span>
+            </button>
         </div>
 
       </div>
@@ -492,7 +790,7 @@ const quickAmounts = computed(() => {
         <div class="text-center mb-2">
           <h1 class="text-base font-bold uppercase mb-1">Pharmacie</h1>
            <!-- @ts-ignore -->
-           <p class="text-[10px] uppercase mb-1">Ticket #{{ lastVente.numero_ticket }}</p>
+           <p class="text-[10px] uppercase mb-1">{{ lastVente.numero_ticket ? 'Ticket #' + lastVente.numero_ticket : 'Vente #' + lastVente.id }}</p>
            
            <!-- QR Code Centered -->
            <div class="flex justify-center my-1">
@@ -502,8 +800,8 @@ const quickAmounts = computed(() => {
 
            <!-- Info Paiement -->
            <div class="text-[9px] mt-1 space-y-0.5">
-             <p>Vendeur: {{ lastVente.vendeur_nom }}</p>
-             <p>Payé le: {{ lastVente.date_paiement }}</p>
+             <p>Vendeur: {{ lastVente.vendeur_nom || lastVente.user?.name || 'Caissier' }}</p>
+             <p>Date: {{ new Date().toLocaleString() }}</p>
            </div>
         </div>
         
@@ -527,7 +825,7 @@ const quickAmounts = computed(() => {
              <span>{{ formatCurrency(lastVente.total) }} Ar</span>
            </div>
            <div class="flex justify-between text-[10px]">
-             <span class="capitalize">Mode: {{ lastVente.mode_paiement?.replace('_', ' ') }}</span>
+             <span class="capitalize">Mode: {{ (lastVente.mode_paiement || 'Espèces').replace('_', ' ') }}</span>
              <span>Reçu: {{ formatCurrency(lastVente.montant_recu || 0) }}</span>
            </div>
            <div class="flex justify-between text-[10px] font-semibold mt-0.5">
